@@ -20,7 +20,11 @@ class Bot:
         ]
     ]
 
+    CHANGE_INTERVAL, CHANGE_TOPICS = range(2)
+
     def __init__(self, a_token=None, a_use_context=None):
+        self.db_controller = DatabaseController
+
         self._config = configparser.ConfigParser()
 
         if not os.path.exists(config.BOT_SETTINGS_PATH):
@@ -58,33 +62,10 @@ class Bot:
     def stop(self):
         self._updater.stop()
 
-    def add_user_to_database(self, a_id):
-        stmt = (
-            insert(database.Users).
-            values(user_id=a_id)
-        )
-        database.engine.execute(stmt)
-
-    def is_user_in_database(self, a_id):
-        stmt = (
-            select(database.Users.user_id).
-            where(database.Users.user_id == a_id)
-        )
-        results = database.engine.execute(stmt).fetchall()
-        return len(results) != 0
-
-    def change_user_interval(self, a_id, a_interval):
-        stmt = (
-            update(database.Users.user_id).
-            where(database.Users.user_id == a_id).
-            values(interval_send_news=a_interval)
-        )
-        database.engine.execute(stmt)
-
     def __change_interval_controller(self, a_update: Update, a_context: CallbackContext):
         user_id = a_update.effective_chat.id
-        if not self.is_user_in_database(user_id):
-            self.add_user_to_database(user_id)
+        if not self.db_controller.is_there_user(user_id):
+            self.db_controller.add_user(user_id)
         a_context.bot.send_message(chat_id=a_update.effective_chat.id,
                                    text='Укажите интервал отправки сообщений (в минутах)',
                                    reply_markup=ReplyKeyboardMarkup([[KeyboardButton('Назад', callback_data='Назад')]]))
@@ -93,17 +74,45 @@ class Bot:
             a_context.bot.send_message(chat_id=a_update.effective_chat.id,
                                        text='Некорректное сообщение')
         if interval.isdigit():
-            self.change_user_interval(user_id, interval)
+            self.db_controller.change_user_interval(user_id, interval)
 
     def __edit_topics_controller(self, a_update: Update, a_context: CallbackContext):
         user_id = a_update.effective_chat.id
-        if not self.is_user_in_database(user_id):
-            self.add_user_to_database(user_id)
+        if not self.db_controller.is_there_user(user_id):
+            self.db_controller.add_user(user_id)
 
     def __main_message_controller(self, a_update: Update, a_context: CallbackContext):
         user_id = a_update.effective_chat.id
-        if not self.is_user_in_database(user_id):
-            self.add_user_to_database(user_id)
+        if not self.db_controller.is_there_user(user_id):
+            self.db_controller.add_user(user_id)
         a_context.bot.send_message(chat_id=a_update.effective_chat.id,
                                    text=a_update.message.text,
                                    reply_markup=ReplyKeyboardMarkup(self._MAIN_KEYBOARD))
+
+
+class DatabaseController:
+    @staticmethod
+    def add_user(a_id):
+        stmt = (
+            insert(database.Users).
+            values(user_id=a_id)
+        )
+        database.engine.execute(stmt)
+
+    @staticmethod
+    def is_there_user(a_id):
+        stmt = (
+            select(database.Users.user_id).
+            where(database.Users.user_id == a_id)
+        )
+        results = database.engine.execute(stmt).fetchall()
+        return len(results) != 0
+
+    @staticmethod
+    def change_user_interval(a_id, a_interval):
+        stmt = (
+            update(database.Users.user_id).
+            where(database.Users.user_id == a_id).
+            values(interval_send_news=a_interval)
+        )
+        database.engine.execute(stmt)
