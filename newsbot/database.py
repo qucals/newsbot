@@ -16,16 +16,17 @@ class Users(Base):
 
 class UserTopics(Base):
     __tablename__ = 'user_topics'
-    id = Column(Integer, primary_key=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(String, ForeignKey('users.user_id'))
     chosen_topic = Column(String, nullable=False)
 
 
 class UserPagesShown(Base):
     __tablename__ = 'user_pages_shown'
-    id = Column(Integer, primary_key=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(String, ForeignKey('users.user_id'))
     page_id = Column(Integer, nullable=False)
+    topic = Column(String, nullable=False)
 
 
 engine = create_engine(f'sqlite://{BOT_DATABASE_PATH}')

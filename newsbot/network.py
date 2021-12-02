@@ -8,7 +8,7 @@ class NewsSiteParser:
     def __init__(self, a_url):
         self._url = a_url
         self._user_agent = UserAgent()
-        self._headers = {'accept': '*/*', 'user-agent': self._user_agent.firefox}
+        self._headers = {'accept': '*/*', 'user-agent': self._user_agent.safari}
 
     def get_news_topics(self, a_topic_class):
         r = requests.get(self._url, headers=self._headers)
