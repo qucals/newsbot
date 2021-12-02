@@ -3,14 +3,21 @@ from __future__ import absolute_import
 import unittest
 import os
 
-from newsbot import (bot, config, database)
+from newsbot import config
 from newsbot.network import NewsSiteParser
 
 config.BOT_SETTINGS_PATH = os.path.join(os.path.dirname(__file__), config.BOT_SETTINGS_FILE)
 config.DEFAULT_SETTINGS['DEFAULT']['token'] = '2130893067:AAFL3ERuk30SIcbONhAOV0KZW4PLFzR2D1A'
+config.BOT_DATABASE_PATH = '/' + os.path.join(os.path.dirname(__file__), 'database.db')
+
+from newsbot import bot
 
 
 class BotTest(unittest.TestCase):
+    def setUpClass(cls):
+        if os.path.exists(config.BOT_DATABASE_PATH):
+            os.remove(config.BOT_DATABASE_PATH)
+
     def setUp(self):
         if os.path.exists(config.BOT_SETTINGS_PATH):
             os.remove(config.BOT_SETTINGS_PATH)
@@ -36,11 +43,11 @@ class BotTest(unittest.TestCase):
         """
 
         bot_ = bot.Bot()
-        parser = NewsSiteParser(bot_.config['news_url'], bot_.config['news_topic_class'])
+        parser = NewsSiteParser(bot_.config['news_url'])
 
         expected_topics = ['Все потоки', 'Разработка', 'Администрирование',
                            'Дизайн', 'Менеджмент', 'Маркетинг', 'Научпоп']
-        received_topics = parser.get_news_topics()
+        received_topics = parser.get_news_topics(bot_.config['news_topic_class'])
 
         self.assertEqual(expected_topics, received_topics)
 
