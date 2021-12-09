@@ -1,32 +1,19 @@
 import os
 import configparser
 
-from sqlalchemy import insert, delete, update, select
-
-from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import Updater, CallbackContext, MessageHandler, Filters, CommandHandler, ConversationHandler
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram.ext import Updater, MessageHandler, Filters, CallbackContext
 
 import newsbot.config as config
 import newsbot.database as database
 import newsbot.network as network
 
 
-# noinspection PyMethodMayBeStatic
 class Bot:
-    _MAIN_KEYBOARD = [
-        [
-            '/interval',
-            '/topics'
-        ]
-    ]
-
-    CHANGE_INTERVAL, CHANGE_TOPICS, TYPING_INTERVAL, TYPING_TOPICS = range(4)
-
     def __init__(self, a_token=None, a_use_context=None):
-        self.db_controller = DatabaseController
+        self.db = database.DatabaseController
 
         self._config = configparser.ConfigParser()
-
         if not os.path.exists(config.BOT_SETTINGS_PATH):
             with open(config.BOT_SETTINGS_PATH, 'w') as configfile:
                 config.DEFAULT_SETTINGS.write(configfile)
@@ -42,28 +29,22 @@ class Bot:
         self._updater = Updater(token=self._token, use_context=self._use_context)
         self._dispatcher = self._updater.dispatcher
 
-        self.conv_handler = ConversationHandler(
-            entry_points=[CommandHandler('interval', self.__change_interval),
-                          CommandHandler('topics', self.__edit_topics)],
-            states={
-                self.CHANGE_INTERVAL: [CommandHandler('interval',
-                                                      self.__change_interval)],
-                self.CHANGE_TOPICS: [CommandHandler('topics', self.__edit_topics)],
-                self.TYPING_INTERVAL: [MessageHandler(Filters.regex('^[0-9]+$'), self.__typing_interval)],
-                self.TYPING_TOPICS: [MessageHandler(Filters.regex('\\w+') & ~Filters.command, self.__typing_topics)],
-            },
-            fallbacks=[CommandHandler('cancel', self.__cancel)]
-        )
-        self._dispatcher.add_handler(self.conv_handler)
+        handler = MessageHandler(Filters.text | Filters.command, self.__handle_message)
+        self._dispatcher.add_handler(handler)
 
-        # change_interval_controller = ConversationHandler('change_interval', self._change_interval_controller)
-        # change_interval_controller = CommandHandler('change_interval', self.__change_interval)
-        # self._dispatcher.add_handler(change_interval_controller)
+        self._main_buttons = [
+            [
+                'Изменить интервал ⏱',
+                'Выбрать топики 📖',
+            ]
+        ]
 
-        # edit_topics_controller = CommandHandler('edit_topics', self.__edit_topics)
-        # self._dispatcher.add_handler(edit_topics_controller)
-
-        self._dispatcher.add_handler(CommandHandler('start', self.__start))
+        self._states = [
+            self.__s_start,
+            self.__s_main,
+            self.__s_typing_interval,
+            self.__s_choosing_topics,
+        ]
 
     @property
     def config(self):
@@ -76,105 +57,149 @@ class Bot:
     def stop(self):
         self._updater.stop()
 
-    def __start(self, a_update: Update, a_context: CallbackContext):
+    def __handle_message(self, a_update: Update, a_context: CallbackContext):
         user_id = a_update.effective_user.id
-        self.db_controller.add_user_if_there_is_not(user_id)
+        self.db.add_user_if_there_is_not(user_id)
 
-        # TODO: Изменить текст сообщения
-        a_context.bot.send_message(chat_id=user_id,
-                                   text='Привет!',
-                                   reply_markup=ReplyKeyboardMarkup(self._MAIN_KEYBOARD))
+        user_state = self.db.get_user_state(user_id)
+        self._states[user_state](a_update, a_context)
 
-    def __change_interval(self, a_update: Update, a_context: CallbackContext):
-        text = 'Введите интервал отправки сообщения.'
-        a_context.bot.send_message(chat_id=a_update.effective_user.id,
-                                   text=text,
-                                   reply_markup=ReplyKeyboardMarkup([['/cancel']]))
-        return self.TYPING_INTERVAL
-
-    def __typing_interval(self, a_update: Update, a_context: CallbackContext):
+    def __s_start(self, a_update: Update, a_context: CallbackContext):
         user_id = a_update.effective_user.id
-        value = a_update.message.text
-        if not value.isdigit():
-            text = 'Некорректное значение, попробуйте заново!'
-            a_context.bot.send_message(chat_id=user_id,
-                                       text=text,
-                                       reply_markup=ReplyKeyboardMarkup([['/cancel']]))
-            return self.TYPING_INTERVAL
+        user_name = a_update.effective_user.name
+
+        self.db.set_user_state(user_id, 1)
+
+        text = f'Привет, {user_name}!\nЭтот бот предназначен для получения новостей с habr.com по вашим ' \
+               f'предпочтениям.\nВы также можете задать с помощью кнопок интервал отправки новостей и интересующих ' \
+               f'для вас топиков новостей.'
+
+        a_context.bot.send_message(
+            chat_id=user_id,
+            text=text,
+            reply_markup=ReplyKeyboardMarkup(self._main_buttons)
+        )
+
+    def __s_main(self, a_update: Update, a_context: CallbackContext):
+        user_id = a_update.effective_user.id
+        user_text = a_update.message.text
+
+        if user_text not in self._main_buttons[0]:
+            text = 'Неизвестная команда 🤥. Воспользуйся кнопками ниже!'
+            a_context.bot.send_message(
+                chat_id=user_id,
+                text=text,
+                reply_markup=ReplyKeyboardMarkup(self._main_buttons)
+            )
         else:
-            text = 'Значение успешно обновлено!'
-            self.db_controller.change_user_interval(user_id, int(value))
-            a_context.bot.send_message(chat_id=user_id,
-                                       text=text,
-                                       reply_markup=ReplyKeyboardMarkup(self._MAIN_KEYBOARD))
-            return ConversationHandler.END
+            if user_text == 'Изменить интервал ⏱':
+                self.db.set_user_state(user_id, 2)
 
-    def __edit_topics(self, a_update: Update, a_context: CallbackContext):
-        return self.TYPING_TOPICS
+                text = 'Введите новое значение интервала отправки новостей.'
+                a_context.bot.send_message(
+                    chat_id=user_id,
+                    text=text,
+                    reply_markup=ReplyKeyboardMarkup([['Отмена']])
+                )
+            elif user_text == 'Выбрать топики 📖':
+                self.db.set_user_state(user_id, 3)
 
-    def __typing_topics(self, a_update: Update, a_context: CallbackContext):
-        return ConversationHandler.END
+                text = 'Выберите интересующие вас топики новостей.\n✅ – означает, что топик выбран, ❌ – обратное. Для ' \
+                       'того, чтобы выйти, выберите кнопку "Закончить выбор".'
+                a_context.bot.send_message(
+                    chat_id=user_id,
+                    text=text,
+                    reply_markup=self.__get_keyboard_tor_edit_topics(user_id)
+                )
 
-    def __cancel(self, a_update: Update, a_context: CallbackContext):
-        a_context.bot.send_message(chat_id=a_update.effective_chat.id,
-                                   reply_markup=ReplyKeyboardMarkup(self._MAIN_KEYBOARD))
-        return ConversationHandler.END
+    def __s_typing_interval(self, a_update: Update, a_context: CallbackContext):
+        user_id = a_update.effective_user.id
+        user_text = a_update.message.text
 
+        if user_text.isdigit():
+            self.db.change_user_interval(user_id, user_text)
+            self.db.set_user_state(user_id, 1)
 
-class DatabaseController:
-    @staticmethod
-    def add_user(a_id):
-        stmt = (
-            insert(database.Users).
-            values(user_id=a_id)
-        )
-        database.engine.execute(stmt)
+            text = f'Интервал отправки новостей успешно изменен. Текущее значение интервала: {user_text}'
+            a_context.bot.send_message(
+                chat_id=user_id,
+                text=text,
+                reply_markup=ReplyKeyboardMarkup(self._main_buttons)
+            )
+        elif user_text == 'Отмена':
+            self.db.set_user_state(user_id, 1)
+            interval = self.db.get_user_interval(user_id)
 
-    @staticmethod
-    def is_there_user(a_id):
-        stmt = (
-            select(database.Users.user_id).
-            where(database.Users.user_id == a_id)
-        )
-        results = database.engine.execute(stmt).fetchall()
-        return len(results) != 0
+            text = f'Операция по изменению интервала отменена. Текущее значение интервала: {interval}'
+            a_context.bot.send_message(
+                chat_id=user_id,
+                text=text,
+                reply_markup=ReplyKeyboardMarkup(self._main_buttons)
+            )
+        else:
+            text = 'Некорректное значение для интервала! Попробуй еще раз.'
+            a_context.bot.send_message(
+                chat_id=user_id,
+                text=text,
+            )
 
-    @staticmethod
-    def add_user_if_there_is_not(a_id):
-        if not DatabaseController.is_there_user(a_id):
-            DatabaseController.add_user(a_id)
+    def __s_choosing_topics(self, a_update: Update, a_context: CallbackContext):
+        user_id = a_update.effective_user.id
+        user_topic = a_update.message.text
 
-    @staticmethod
-    def change_user_interval(a_id, a_interval):
-        stmt = (
-            update(database.Users).
-            where(database.Users.user_id == a_id).
-            values(interval_send_news=a_interval)
-        )
-        database.engine.execute(stmt)
+        if user_topic[:-1] in self._topics:
+            user_topic = user_topic[:-1]
+            if self.db.has_user_topic(user_id, user_topic):
+                self.db.remove_topic_of_user(user_id, user_topic)
+                text = f'Топик "{user_topic}" успешно удален!'
+            else:
+                self.db.add_topic_to_user(user_id, user_topic)
+                text = f'Топик "{user_topic}" успешно выбран!'
+            a_context.bot.send_message(
+                chat_id=user_id,
+                text=text,
+                reply_markup=self.__get_keyboard_tor_edit_topics(user_id)
+            )
+        elif user_topic == 'Закончить выбор':
+            self.db.set_user_state(user_id, 1)
 
-    @staticmethod
-    def get_users_topics(a_id):
-        stmt = (
-            select(database.UserTopics.chosen_topic).
-            where(database.UserTopics.user_id == a_id)
-        )
-        cursor = database.engine.execute(stmt)
-        return cursor.fetchall()
+            text = 'Операция по выбору топиков завершена! Изменения зафиксированы.'
+            a_context.bot.send_message(
+                chat_id=user_id,
+                text=text,
+                reply_markup=ReplyKeyboardMarkup(self._main_buttons)
+            )
+        else:
+            text = 'Неизвестный топик 🤥. Для выбора топика воспользуйтесь кнопками!'
+            a_context.bot.send_message(
+                chat_id=user_id,
+                text=text
+            )
 
-    @staticmethod
-    def add_topic_to_user(a_id, a_topic):
-        stmt = (
-            insert(database.UserTopics).
-            values(user_id=a_id, chosen_topic=a_topic)
-        )
-        database.engine.execute(stmt)
+    def __get_keyboard_tor_edit_topics(self, a_user_id):
+        user_chosen_topics = self.db.get_users_topics(a_user_id)
 
-    @staticmethod
-    def remove_topic_of_user(a_id, a_topic):
-        stmt = (
-            delete(database.UserTopics).
-            where(database.UserTopics.user_id == a_id).
-            where(database.UserTopics.chosen_topic == a_topic)
-        )
-        database.engine.execute(stmt)
+        btns_text = []
+        for topic in self._topics:
+            if topic in user_chosen_topics:
+                btns_text.append(f'{topic}✅')
+            else:
+                btns_text.append(f'{topic}❌')
+
+        keyboard = []
+        tmp = []
+
+        for idx, text in enumerate(btns_text):
+            if (idx + 1) % 3 != 0:
+                tmp.append(KeyboardButton(text))
+            else:
+                keyboard.append(tmp.copy())
+                tmp.clear()
+
+        if len(tmp) + 1 % 3 == 0:
+            keyboard.append(tmp.copy())
+            tmp.clear()
+        tmp.append(KeyboardButton('Закончить выбор'))
+        keyboard.append(tmp)
+
+        return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
