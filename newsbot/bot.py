@@ -94,7 +94,8 @@ class Bot:
 
     def __typing_interval(self, a_update: Update, a_context: CallbackContext):
         user_id = a_update.effective_user.id
-        if not a_update.message.text.isdigit():
+        value = a_update.message.text
+        if not value.isdigit():
             text = 'Некорректное значение, попробуйте заново!'
             a_context.bot.send_message(chat_id=user_id,
                                        text=text,
@@ -102,7 +103,7 @@ class Bot:
             return self.TYPING_INTERVAL
         else:
             text = 'Значение успешно обновлено!'
-            self.db_controller.change_user_interval(user_id, text)
+            self.db_controller.change_user_interval(user_id, int(value))
             a_context.bot.send_message(chat_id=user_id,
                                        text=text,
                                        reply_markup=ReplyKeyboardMarkup(self._MAIN_KEYBOARD))
@@ -146,7 +147,7 @@ class DatabaseController:
     @staticmethod
     def change_user_interval(a_id, a_interval):
         stmt = (
-            update(database.Users.user_id).
+            update(database.Users).
             where(database.Users.user_id == a_id).
             values(interval_send_news=a_interval)
         )
