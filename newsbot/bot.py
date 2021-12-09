@@ -74,6 +74,7 @@ class Bot:
         user_name = a_update.effective_user.name
 
         self.db.set_user_state(user_id, 1)
+        self.__set_job_to_send_news(a_update, a_context)
 
         text = f'Привет, {user_name}!\nЭтот бот предназначен для получения новостей с habr.com по вашим ' \
                f'предпочтениям.\nВы также можете задать с помощью кнопок интервал отправки новостей и интересующих ' \
@@ -106,7 +107,7 @@ class Bot:
             if user_text == 'Изменить интервал ⏱':
                 self.db.set_user_state(user_id, 2)
 
-                text = 'Введите новое значение интервала отправки новостей.'
+                text = 'Введите новое значение интервала отправки новостей (в минутах).'
                 a_context.bot.send_message(
                     chat_id=user_id,
                     text=text,
@@ -123,17 +124,18 @@ class Bot:
                     reply_markup=self.__get_keyboard_tor_edit_topics(user_id)
                 )
             elif user_text == 'Хочу новости вне очереди! 🐷':
-                self.__get_news(a_update, a_context)
+                self.__get_news(a_context, a_update)
 
     def __s_typing_interval(self, a_update: Update, a_context: CallbackContext):
         user_id = a_update.effective_user.id
         user_text = a_update.message.text
 
-        if user_text.isdigit():
+        if user_text.isdigit() and int(user_text) > 0:
             self.db.set_user_interval(user_id, user_text)
             self.db.set_user_state(user_id, 1)
+            self.__set_job_to_send_news(a_update, a_context)
 
-            text = f'Интервал отправки новостей успешно изменен. Текущее значение интервала: {user_text}'
+            text = f'Интервал отправки новостей успешно изменен. Текущее значение интервала: {user_text} мин.'
             a_context.bot.send_message(
                 chat_id=user_id,
                 text=text,
@@ -143,7 +145,7 @@ class Bot:
             self.db.set_user_state(user_id, 1)
             interval = self.db.get_user_interval(user_id)
 
-            text = f'Операция по изменению интервала отменена. Текущее значение интервала: {interval}'
+            text = f'Операция по изменению интервала отменена. Текущее значение интервала: {interval} мин.'
             a_context.bot.send_message(
                 chat_id=user_id,
                 text=text,
@@ -211,8 +213,11 @@ class Bot:
 
         return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-    def __get_news(self, a_update: Update, a_context: CallbackContext):
-        user_id = a_update.effective_user.id
+    def __get_news(self, a_context: CallbackContext, a_update: Update = None):
+        if a_update:
+            user_id = a_update.effective_user.id
+        else:
+            user_id = a_context.job.context
         user_topics = self.db.get_users_topics(user_id)
 
         if len(user_topics) == 0:
@@ -244,3 +249,15 @@ class Bot:
             reply_markup=ReplyKeyboardMarkup(self._main_buttons),
             parse_mode=telegram.ParseMode.MARKDOWN,
         )
+
+    def __set_job_to_send_news(self, a_update: Update, a_context: CallbackContext):
+        user_id = a_update.effective_user.id
+        interval = self.db.get_user_interval(user_id) * 60
+
+        # Удаляем предыдущие задачи
+        jobs = a_context.job_queue.get_jobs_by_name(user_id)
+        if jobs:
+            for job in jobs:
+                job.schedule_removal()
+
+        a_context.job_queue.run_repeating(self.__get_news, interval, context=str(user_id), name=str(user_id))

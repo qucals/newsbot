@@ -1,3 +1,5 @@
+import time
+
 import requests
 
 from bs4 import BeautifulSoup as bs
@@ -16,6 +18,7 @@ class NewsSiteParser:
             r = requests.get(self._url, headers=self._headers)
             soup = bs(r.text, features='html.parser')
             topics = soup.find_all('a', {'class': a_topic_class})
+            time.sleep(1)
         return {topic.text.strip(): topic.attrs['href'][4:] for topic in topics}
 
     def get_news(self, a_url_topic, a_shown_list=None, a_page=None, a_limit_preview_text=None):
