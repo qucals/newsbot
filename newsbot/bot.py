@@ -74,7 +74,6 @@ class Bot:
         user_name = a_update.effective_user.name
 
         self.db.set_user_state(user_id, 1)
-        self.__set_job_to_send_news(a_update, a_context)
 
         text = f'Привет, {user_name}!\nЭтот бот предназначен для получения новостей с habr.com по вашим ' \
                f'предпочтениям.\nВы также можете задать с помощью кнопок интервал отправки новостей и интересующих ' \
@@ -83,7 +82,7 @@ class Bot:
         a_context.bot.send_message(
             chat_id=user_id,
             text=text,
-            reply_markup=ReplyKeyboardMarkup(self._main_buttons)
+            reply_markup=self.__get_main_keyboard(a_update, a_context)
         )
 
     def __s_main(self, a_update: Update, a_context: CallbackContext):
@@ -91,7 +90,7 @@ class Bot:
         user_text = a_update.message.text
 
         command_found = False
-        for btns_list in self._main_buttons:
+        for btns_list in self.__format_main_keyboard(a_update, a_context):
             if user_text in btns_list:
                 command_found = True
                 break
@@ -101,7 +100,7 @@ class Bot:
             a_context.bot.send_message(
                 chat_id=user_id,
                 text=text,
-                reply_markup=ReplyKeyboardMarkup(self._main_buttons)
+                reply_markup=self.__get_main_keyboard(a_update, a_context)
             )
         else:
             if user_text == 'Изменить интервал ⏱':
@@ -125,6 +124,11 @@ class Bot:
                 )
             elif user_text == 'Хочу новости вне очереди! 🐷':
                 self.__get_news(a_context, a_update)
+            elif user_text in ['Выключить отправку новостей 🔕', 'Включить отправку новостей 🔔']:
+                if self.__has_user_job_to_send_news(a_update, a_context):
+                    self.__stop_job_to_send_news(a_update, a_context)
+                else:
+                    self.__start_job_to_send_news(a_update, a_context)
 
     def __s_typing_interval(self, a_update: Update, a_context: CallbackContext):
         user_id = a_update.effective_user.id
@@ -133,13 +137,13 @@ class Bot:
         if user_text.isdigit() and int(user_text) > 0:
             self.db.set_user_interval(user_id, user_text)
             self.db.set_user_state(user_id, 1)
-            self.__set_job_to_send_news(a_update, a_context)
+            self.__start_job_to_send_news(a_update, a_context)
 
             text = f'Интервал отправки новостей успешно изменен. Текущее значение интервала: {user_text} мин.'
             a_context.bot.send_message(
                 chat_id=user_id,
                 text=text,
-                reply_markup=ReplyKeyboardMarkup(self._main_buttons)
+                reply_markup=self.__get_main_keyboard(a_update, a_context)
             )
         elif user_text == 'Отмена':
             self.db.set_user_state(user_id, 1)
@@ -149,7 +153,7 @@ class Bot:
             a_context.bot.send_message(
                 chat_id=user_id,
                 text=text,
-                reply_markup=ReplyKeyboardMarkup(self._main_buttons)
+                reply_markup=self.__get_main_keyboard(a_update, a_context)
             )
         else:
             text = 'Некорректное значение для интервала! Попробуй еще раз.'
@@ -174,7 +178,7 @@ class Bot:
         elif user_topic == 'Закончить выбор':
             self.db.set_user_state(user_id, 1)
             text = 'Операция по выбору топиков завершена! Изменения зафиксированы.'
-            keyboard = ReplyKeyboardMarkup(self._main_buttons)
+            keyboard = self.__get_main_keyboard(a_update, a_context)
         else:
             text = 'Неизвестный топик 🤥. Для выбора топика воспользуйтесь кнопками!'
             keyboard = self.__get_keyboard_tor_edit_topics(user_id)
@@ -213,6 +217,26 @@ class Bot:
 
         return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
+    @staticmethod
+    def __has_user_job_to_send_news(a_update: Update, a_context: CallbackContext):
+        user_id = a_update.effective_user.id
+        jobs = a_context.job_queue.get_jobs_by_name(str(user_id))
+        return len(jobs) > 0
+
+    def __format_main_keyboard(self, a_update: Update, a_context: CallbackContext):
+        keyboard = self._main_buttons.copy()
+        user_id = a_update.effective_user.id
+
+        if self.__has_user_job_to_send_news(a_update, a_context):
+            keyboard.append(['Выключить отправку новостей 🔕'])
+        else:
+            keyboard.append(['Включить отправку новостей 🔔'])
+
+        return keyboard
+
+    def __get_main_keyboard(self, a_update: Update, a_context: CallbackContext):
+        return ReplyKeyboardMarkup(self.__format_main_keyboard(a_update, a_context))
+
     def __get_news(self, a_context: CallbackContext, a_update: Update = None):
         if a_update:
             user_id = a_update.effective_user.id
@@ -246,18 +270,34 @@ class Bot:
         a_context.bot.send_message(
             chat_id=user_id,
             text=text,
-            reply_markup=ReplyKeyboardMarkup(self._main_buttons),
+            reply_markup=self.__get_main_keyboard(a_update, a_context),
             parse_mode=telegram.ParseMode.MARKDOWN,
         )
 
-    def __set_job_to_send_news(self, a_update: Update, a_context: CallbackContext):
+    def __start_job_to_send_news(self, a_update: Update, a_context: CallbackContext):
         user_id = a_update.effective_user.id
         interval = self.db.get_user_interval(user_id) * 60
 
-        # Удаляем предыдущие задачи
+        a_context.job_queue.run_repeating(self.__get_news, interval, context=str(user_id), name=str(user_id))
+
+        text = f'Автоматическая отправка новостей включена! Новости будут отправляться каждые ' \
+               f'{self.db.get_user_interval(user_id)} мин.'
+        a_context.bot.send_message(
+            chat_id=user_id,
+            text=text,
+            reply_markup=self.__get_main_keyboard(a_update, a_context)
+        )
+
+    def __stop_job_to_send_news(self, a_update: Update, a_context: CallbackContext):
+        user_id = a_update.effective_user.id
         jobs = a_context.job_queue.get_jobs_by_name(user_id)
         if jobs:
             for job in jobs:
                 job.schedule_removal()
 
-        a_context.job_queue.run_repeating(self.__get_news, interval, context=str(user_id), name=str(user_id))
+        text = f'Автоматическая отправка новостей выключена!'
+        a_context.bot.send_message(
+            chat_id=user_id,
+            text=text,
+            reply_markup=self.__get_main_keyboard(a_update, a_context)
+        )
