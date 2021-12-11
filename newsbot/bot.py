@@ -12,9 +12,13 @@ import newsbot.network as network
 
 
 class Bot:
+    """Класс, представляющий собой телеграмм бота
+    """
+
     def __init__(self, a_token=None, a_use_context=None):
         self.db = database.DatabaseController
 
+        # Настраиваем конфигурацию бота, считывая конфигурационный файл
         self._config = configparser.ConfigParser()
         if not os.path.exists(config.BOT_SETTINGS_PATH):
             with open(config.BOT_SETTINGS_PATH, 'w') as configfile:
@@ -44,6 +48,7 @@ class Bot:
             ]
         ]
 
+        # Состояния бота
         self._states = [
             self.__s_start,
             self.__s_main,
@@ -56,13 +61,22 @@ class Bot:
         return dict(self._config['DEFAULT'])
 
     def start(self):
+        """Функция запуска работы бота
+        """
+
         self._updater.start_polling()
         self._updater.idle()
 
     def stop(self):
+        """Функция остановки работы бота
+        """
+
         self._updater.stop()
 
     def __handle_message(self, a_update: Update, a_context: CallbackContext):
+        """Функция обработки всех поступающих сообщений боту
+        """
+
         user_id = a_update.effective_user.id
         self.db.add_user_if_there_is_not(user_id)
 
@@ -70,6 +84,9 @@ class Bot:
         self._states[user_state](a_update, a_context)
 
     def __s_start(self, a_update: Update, a_context: CallbackContext):
+        """Первое состояние бота, состояние знакомства
+        """
+
         user_id = a_update.effective_user.id
         user_name = a_update.effective_user.name
 
@@ -78,7 +95,6 @@ class Bot:
         text = f'Привет, {user_name}!\nЭтот бот предназначен для получения новостей с habr.com по вашим ' \
                f'предпочтениям.\nВы также можете задать с помощью кнопок интервал отправки новостей и интересующих ' \
                f'для вас топиков новостей.'
-
         a_context.bot.send_message(
             chat_id=user_id,
             text=text,
@@ -86,6 +102,9 @@ class Bot:
         )
 
     def __s_main(self, a_update: Update, a_context: CallbackContext):
+        """Второе состояние бота, обработка поступающих сообщений (команд)
+        """
+
         user_id = a_update.effective_user.id
         user_text = a_update.message.text
 
@@ -131,6 +150,9 @@ class Bot:
                     self.__start_job_to_send_news(a_update, a_context)
 
     def __s_typing_interval(self, a_update: Update, a_context: CallbackContext):
+        """Третье состояние бота, изменение интервала отправки новостей
+        """
+
         user_id = a_update.effective_user.id
         user_text = a_update.message.text
 
@@ -163,6 +185,9 @@ class Bot:
             )
 
     def __s_choosing_topics(self, a_update: Update, a_context: CallbackContext):
+        """Четвертое состояние бота, выбор топиков новостей
+        """
+
         user_id = a_update.effective_user.id
         user_topic = a_update.message.text
 
@@ -190,6 +215,9 @@ class Bot:
         )
 
     def __get_keyboard_tor_edit_topics(self, a_user_id):
+        """Функция, возвращающая набор кнопок для выбора топиков новостей
+        """
+
         user_chosen_topics = self.db.get_users_topics(a_user_id)
 
         btns_text = []
@@ -219,11 +247,17 @@ class Bot:
 
     @staticmethod
     def __has_user_job_to_send_news(a_update: Update, a_context: CallbackContext):
+        """Функция, возвращающая, установлена ли функция отправки новостей для пользователя
+        """
+
         user_id = a_update.effective_user.id
         jobs = a_context.job_queue.get_jobs_by_name(str(user_id))
         return len(jobs) > 0
 
     def __format_main_keyboard(self, a_update: Update, a_context: CallbackContext):
+        """Функция, возвращающая набор имен для кнопок для основных кнопок
+        """
+
         keyboard = self._main_buttons.copy()
         user_id = a_update.effective_user.id
 
@@ -235,9 +269,15 @@ class Bot:
         return keyboard
 
     def __get_main_keyboard(self, a_update: Update, a_context: CallbackContext):
+        """Функция, возвращающая готовый набор кнопок в обертку ReplyKeyboardMarkup
+        """
+
         return ReplyKeyboardMarkup(self.__format_main_keyboard(a_update, a_context))
 
     def __get_news(self, a_context: CallbackContext, a_update: Update = None):
+        """Функция, возвращающая новость пользователю
+        """
+
         if a_update:
             user_id = a_update.effective_user.id
         else:
@@ -255,7 +295,8 @@ class Bot:
 
         user_shown_list = self.db.get_user_shown_pages(user_id, news_topic)
         news = self._parser.get_news(self._topics[news_topic], a_shown_list=user_shown_list, a_page=user_page,
-                                     a_limit_preview_text=int(self.config['news_limit_text']))
+                                     a_limit_preview_text=int(self.config['news_limit_text']),
+                                     a_additional_content_id=self.config['news_additional_content_id'])
 
         while len(news) == 0:
             user_page += 1
@@ -275,6 +316,9 @@ class Bot:
         )
 
     def __start_job_to_send_news(self, a_update: Update, a_context: CallbackContext):
+        """Функция запуска автоматической отправки новостей пользователю через опредленный интервал
+        """
+
         user_id = a_update.effective_user.id
         interval = self.db.get_user_interval(user_id) * 60
 
@@ -289,6 +333,9 @@ class Bot:
         )
 
     def __stop_job_to_send_news(self, a_update: Update, a_context: CallbackContext):
+        """Функция деактивации автоматической отправки новостей пользователю
+        """
+
         user_id = a_update.effective_user.id
         jobs = a_context.job_queue.get_jobs_by_name(user_id)
         if jobs:

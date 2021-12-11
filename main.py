@@ -10,4 +10,4 @@ if __name__ == '__main__':
     bot_ = bot.Bot(a_token='2130893067:AAFL3ERuk30SIcbONhAOV0KZW4PLFzR2D1A')
 
     bot_.start()
-    # bot_.stop()
+    bot_.stop()

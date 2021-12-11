@@ -14,5 +14,6 @@ DEFAULT_SETTINGS['DEFAULT'] = {
     'news_url_topic': 'https://habr.com/ru/flows/',
     'news_topic_class': 'tm-main-menu__item',
     'news_title': 'tm-article-snippet__title tm-article-snippet__title_h1',
-    'news_limit_text': 560
+    'news_limit_text': 560,
+    'news_additional_content_id': 'post-content-body'
 }
