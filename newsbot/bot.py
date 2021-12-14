@@ -16,7 +16,7 @@ class Bot:
     """
 
     def __init__(self, a_token=None, a_use_context=None):
-        self.db = database.DatabaseController
+        self.db = database.DatabaseController()
 
         # Настраиваем конфигурацию бота, считывая конфигурационный файл
         self._config = configparser.ConfigParser()
@@ -30,7 +30,9 @@ class Bot:
         self._use_context = a_use_context if a_use_context else self._config['DEFAULT']['use_context']
 
         self._parser = network.NewsSiteParser(self.config['news_url'])
+
         self._topics = self._parser.get_news_topics(self.config['news_topic_class'])
+        self._sync_topics(self._topics)
 
         self._updater = Updater(token=self._token, use_context=self._use_context)
         self._dispatcher = self._updater.dispatcher
@@ -73,14 +75,20 @@ class Bot:
 
         self._updater.stop()
 
+    def _sync_topics(self, a_topics):
+        db_topics = self.db.get_topics()
+        for topic in a_topics:
+            if topic not in db_topics:
+                self.db.add_topic(topic)
+
     def __handle_message(self, a_update: Update, a_context: CallbackContext):
         """Функция обработки всех поступающих сообщений боту
         """
 
         user_id = a_update.effective_user.id
-        self.db.add_user_if_there_is_not(user_id)
+        self.db.add_user_if_not_exists(user_id)
 
-        user_state = self.db.get_user_state(user_id)
+        user_state = self.db.get_user(user_id).state
         self._states[user_state](a_update, a_context)
 
     def __s_start(self, a_update: Update, a_context: CallbackContext):
@@ -90,7 +98,7 @@ class Bot:
         user_id = a_update.effective_user.id
         user_name = a_update.effective_user.name
 
-        self.db.set_user_state(user_id, 1)
+        self.db.update_user_state(a_user_id=user_id, a_state=1)
 
         text = f'Привет, {user_name}!\nЭтот бот предназначен для получения новостей с habr.com по вашим ' \
                f'предпочтениям.\nВы также можете задать с помощью кнопок интервал отправки новостей и интересующих ' \
@@ -123,7 +131,7 @@ class Bot:
             )
         else:
             if user_text == 'Изменить интервал ⏱':
-                self.db.set_user_state(user_id, 2)
+                self.db.update_user_state(a_user_id=user_id, a_state=2)
 
                 text = 'Введите новое значение интервала отправки новостей (в минутах).'
                 a_context.bot.send_message(
@@ -132,7 +140,7 @@ class Bot:
                     reply_markup=ReplyKeyboardMarkup([['Отмена']])
                 )
             elif user_text == 'Выбрать топики 📖':
-                self.db.set_user_state(user_id, 3)
+                self.db.update_user_state(a_user_id=user_id, a_state=3)
 
                 text = 'Выберите интересующие вас топики новостей.\n✅ – означает, что топик выбран, ❌ – обратное. Для ' \
                        'того, чтобы выйти, выберите кнопку "Закончить выбор".'
@@ -157,8 +165,8 @@ class Bot:
         user_text = a_update.message.text
 
         if user_text.isdigit() and int(user_text) > 0:
-            self.db.set_user_interval(user_id, user_text)
-            self.db.set_user_state(user_id, 1)
+            self.db.update_user_interval(a_user_id=user_id, a_interval=user_text)
+            self.db.update_user_state(a_user_id=user_id, a_state=1)
             self.__start_job_to_send_news(a_update, a_context)
 
             text = f'Интервал отправки новостей успешно изменен. Текущее значение интервала: {user_text} мин.'
@@ -168,8 +176,8 @@ class Bot:
                 reply_markup=self.__get_main_keyboard(a_update, a_context)
             )
         elif user_text == 'Отмена':
-            self.db.set_user_state(user_id, 1)
-            interval = self.db.get_user_interval(user_id)
+            self.db.update_user_state(a_user_id=user_id, a_state=1)
+            interval = self.db.get_user(user_id).interval
 
             text = f'Операция по изменению интервала отменена. Текущее значение интервала: {interval} мин.'
             a_context.bot.send_message(
@@ -194,14 +202,14 @@ class Bot:
         if user_topic[:-1] in self._topics:
             user_topic = user_topic[:-1]
             if self.db.has_user_topic(user_id, user_topic):
-                self.db.remove_topic_of_user(user_id, user_topic)
+                self.db.delete_topic_of_user(a_user_id=user_id, a_topic_name=user_topic)
                 text = f'Топик "{user_topic}" успешно удален!'
             else:
-                self.db.add_topic_to_user(user_id, user_topic)
+                self.db.add_topic_to_user(a_user_id=user_id, a_topic_name=user_topic)
                 text = f'Топик "{user_topic}" успешно выбран!'
             keyboard = self.__get_keyboard_tor_edit_topics(user_id)
         elif user_topic == 'Закончить выбор':
-            self.db.set_user_state(user_id, 1)
+            self.db.update_user_state(a_user_id=user_id, a_state=1)
             text = 'Операция по выбору топиков завершена! Изменения зафиксированы.'
             keyboard = self.__get_main_keyboard(a_update, a_context)
         else:
@@ -259,7 +267,6 @@ class Bot:
         """
 
         keyboard = self._main_buttons.copy()
-        user_id = a_update.effective_user.id
 
         if self.__has_user_job_to_send_news(a_update, a_context):
             keyboard.append(['Выключить отправку новостей 🔕'])
@@ -284,28 +291,23 @@ class Bot:
             user_id = a_context.job.context
         user_topics = self.db.get_users_topics(user_id)
 
+        page = None
         if len(user_topics) == 0:
-            is_random = False
-            news_topic = list(self._topics.keys())[0]
-            user_page = None
+            posts_topic = list(self._topics.keys())[0]
         else:
-            is_random = True
-            news_topic = random.choice(user_topics)
-            user_page = self.db.get_user_current_page(user_id, news_topic)
+            posts_topic = random.choice(user_topics)
 
-        user_shown_list = self.db.get_user_shown_pages(user_id, news_topic)
-        news = self._parser.get_news(self._topics[news_topic], a_shown_list=user_shown_list, a_page=user_page,
+        user_shown_list = self.db.get_user_shown_posts(a_user_id=user_id, a_topic_name=posts_topic)
+        news = self._parser.get_news(self._topics[posts_topic], a_shown_list=user_shown_list, a_page=page,
                                      a_limit_preview_text=int(self.config['news_limit_text']),
                                      a_additional_content_id=self.config['news_additional_content_id'])
-
+        page = 0
         while len(news) == 0:
-            user_page += 1
-            if is_random:
-                self.db.set_user_news_page(user_id, news_topic, user_page)
-            news = self._parser.get_news(self._topics[news_topic], a_shown_list=user_shown_list, a_page=user_page,
+            page += 1
+            news = self._parser.get_news(self._topics[posts_topic], a_shown_list=user_shown_list, a_page=page,
                                          a_limit_preview_text=int(self.config['news_limit_text']))
 
-        self.db.add_shown_news(user_id, news_topic, news['id'])
+        self.db.add_shown_post(a_user_id=user_id, a_topic_name=posts_topic, a_post_id=news['id'])
 
         text = f'*{news["title"]}*\n\n{news["text"]}\n\nЗаинтересовало? Читай дальше по ссылке: {news["url"]}'
         a_context.bot.send_message(
@@ -320,12 +322,11 @@ class Bot:
         """
 
         user_id = a_update.effective_user.id
-        interval = self.db.get_user_interval(user_id) * 60
+        interval = self.db.get_user(user_id).interval
 
-        a_context.job_queue.run_repeating(self.__get_news, interval, context=str(user_id), name=str(user_id))
+        a_context.job_queue.run_repeating(self.__get_news, interval * 60, context=str(user_id), name=str(user_id))
 
-        text = f'Автоматическая отправка новостей включена! Новости будут отправляться каждые ' \
-               f'{self.db.get_user_interval(user_id)} мин.'
+        text = f'Автоматическая отправка новостей включена! Новости будут отправляться каждые {interval} мин.'
         a_context.bot.send_message(
             chat_id=user_id,
             text=text,

@@ -88,7 +88,7 @@ class DatabaseController:
         self.session.commit()
 
     def update_user_interval(self, a_user_id, a_interval):
-        stmt = update(Users).where(Users.id == a_user_id).values(inverval=a_interval)
+        stmt = update(Users).where(Users.id == a_user_id).values(interval=a_interval)
         self.session.execute(stmt)
 
     def update_user_state(self, a_user_id, a_state):
@@ -96,8 +96,8 @@ class DatabaseController:
         self.session.execute(stmt)
 
     def get_users_topics(self, a_user_id):
-        topic_ids = self.session.query(UserTopics.topic).filter_by(user_id=a_user_id).all()
-        return [topic.topic_name for topic in topic_ids]
+        user_topics = self.session.query(UserTopics).filter_by(user_id=a_user_id).all()
+        return [ut.topic.topic_name for ut in user_topics]
 
     def get_user_shown_posts(self, a_user_id, a_topic_name):
         topic_id = self.get_topic(a_topic_name).id
@@ -106,6 +106,9 @@ class DatabaseController:
 
     def delete_topic_of_user(self, a_user_id, a_topic_name):
         topic_id = self.get_topic(a_topic_name).id
-        self.session.query(UserTopics).filter_by(UserTopics.user_id == a_user_id, UserTopics.topic_id == topic_id).\
-            delete()
+        self.session.query(UserTopics).filter_by(user_id=a_user_id, topic_id=topic_id).delete()
         self.session.commit()
+
+    def get_topics(self):
+        topics = self.session.query(Topics).all()
+        return [topic.topic_name for topic in topics]
