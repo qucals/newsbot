@@ -1,5 +1,6 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, create_engine, insert, delete, update, select
+from sqlalchemy import Column, Integer, String, ForeignKey, create_engine, insert, delete, update, select, and_
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import relationship, backref, sessionmaker
 from sqlalchemy_utils import database_exists, create_database
 
 from newsbot.config import BOT_DATABASE_PATH
@@ -9,172 +10,102 @@ Base = declarative_base()
 
 class Users(Base):
     __tablename__ = 'users'
-    user_id = Column(String, primary_key=True)
-    interval_send_news = Column(Integer, nullable=False, default=5)
-    current_page = Column(Integer, nullable=False, default=0)
-    current_state = Column(Integer, nullable=False, default=0)
+    id = Column(String, primary_key=True)
+    interval = Column(Integer, nullable=False, default=5)
+    state = Column(Integer, nullable=False, default=0)
+
+
+class Topics(Base):
+    __tablename__ = 'topics'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    topic_name = Column(String, nullable=False)
 
 
 class UserTopics(Base):
     __tablename__ = 'user_topics'
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(String, ForeignKey('users.user_id'))
-    chosen_topic = Column(String, nullable=False)
-    page = Column(Integer, nullable=False, default=0)
+    user_id = Column(String, ForeignKey('users.id'))
+
+    topic_id = Column(Integer, ForeignKey('topics.id'))
+    topic = relationship('Topics', backref=backref('user_topics', order_by=topic_id))
 
 
-class UserShownNews(Base):
-    __tablename__ = 'user_shown_news'
+class UserShownPosts(Base):
+    __tablename__ = 'user_shown_posts'
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(String, ForeignKey('users.user_id'))
-    topic = Column(String, nullable=False)
-    news_id = Column(Integer, nullable=False)
+    post_id = Column(Integer, nullable=False)
+    user_id = Column(String, ForeignKey('users.id'))
+    topic_id = Column(Integer, ForeignKey('topics.id'))
 
 
 engine = create_engine(f'sqlite://{BOT_DATABASE_PATH}')
 if not database_exists(engine.url):
     create_database(engine.url)
-
 Base.metadata.create_all(bind=engine)
+
+Session = sessionmaker(bind=engine)
 
 
 class DatabaseController:
-    @staticmethod
-    def add_user(a_id):
-        stmt = (
-            insert(Users).
-            values(user_id=a_id)
-        )
-        engine.execute(stmt)
+    def __init__(self):
+        self.session = Session()
 
-    @staticmethod
-    def add_user_if_there_is_not(a_id):
-        if not DatabaseController.is_there_user(a_id):
-            DatabaseController.add_user(a_id)
+    def add_user(self, a_id):
+        self.session.add(Users(id=a_id))
+        self.session.commit()
 
-    @staticmethod
-    def add_topic_to_user(a_id, a_topic):
-        stmt = (
-            insert(UserTopics).
-            values(user_id=a_id, chosen_topic=a_topic)
-        )
-        engine.execute(stmt)
+    def get_user(self, a_id):
+        return self.session.query(Users).get(a_id)
 
-    @staticmethod
-    def add_shown_news(a_user_id, a_topic, a_news_id):
-        stmt = (
-            insert(UserShownNews).
-            values(user_id=a_user_id, topic=a_topic, news_id=a_news_id)
-        )
-        engine.execute(stmt)
+    def add_user_if_not_exists(self, a_id):
+        if self.get_user(a_id) is None:
+            self.add_user(a_id)
 
-    @staticmethod
-    def set_user_interval(a_id, a_interval):
-        stmt = (
-            update(Users).
-            where(Users.user_id == a_id).
-            values(interval_send_news=a_interval)
-        )
-        engine.execute(stmt)
+    def add_topic(self, a_topic_name):
+        self.session.add(Topics(topic_name=a_topic_name))
+        self.session.commit()
 
-    @staticmethod
-    def set_user_state(a_id, a_state):
-        stmt = (
-            update(Users).
-            where(Users.user_id == a_id).
-            values(current_state=a_state)
-        )
-        engine.execute(stmt)
+    def get_topic(self, a_topic_name):
+        return self.session.query(Topics).filter_by(topic_name=a_topic_name).first()
 
-    @staticmethod
-    def set_user_news_page(a_user_id, a_topic, a_page):
-        stmt = (
-            update(UserTopics).
-            where(UserTopics.user_id == a_user_id).
-            where(UserTopics.chosen_topic == a_topic).
-            values(page=a_page)
-        )
-        engine.execute(stmt)
+    def add_topic_if_not_exists(self, a_topic_name):
+        if self.get_topic(a_topic_name) is None:
+            self.add_topic(a_topic_name)
 
-    @staticmethod
-    def is_there_user(a_id):
-        stmt = (
-            select(Users.user_id).
-            where(Users.user_id == a_id)
-        )
-        results = engine.execute(stmt).fetchall()
-        return len(results) != 0
+    def add_topic_to_user(self, a_user_id, a_topic_name):
+        topic_id = self.get_topic(a_topic_name).id
+        self.session.add(UserTopics(user_id=a_user_id, topic_id=topic_id))
+        self.session.commit()
 
-    @staticmethod
-    def has_user_topic(a_user_id, a_topic):
-        stmt = (
-            select(UserTopics.user_id).
-            where(UserTopics.user_id == a_user_id).
-            where(UserTopics.chosen_topic == a_topic)
-        )
-        cursor = engine.execute(stmt)
-        return len(cursor.fetchall()) != 0
+    def has_user_topic(self, a_user_id, a_topic_name):
+        topic_id = self.get_topic(a_topic_name).id
+        user = self.session.query(UserTopics).filter_by(user_id=a_user_id, topic_id=topic_id).first()
+        return user is not None
 
-    @staticmethod
-    def get_users_topics(a_id):
-        stmt = (
-            select(UserTopics.chosen_topic).
-            where(UserTopics.user_id == a_id)
-        )
-        cursor = engine.execute(stmt)
-        return [d[0] for d in cursor.fetchall()]
+    def add_shown_post(self, a_user_id, a_topic_name, a_post_id):
+        topic_id = self.get_topic(a_topic_name).id
+        self.session.add(UserShownPosts(post_id=a_post_id, user_id=a_user_id, topic_id=topic_id))
+        self.session.commit()
 
-    @staticmethod
-    def get_user_interval(a_id):
-        stmt = (
-            select(Users.interval_send_news).
-            where(Users.user_id == a_id)
-        )
-        cursor = engine.execute(stmt)
-        return cursor.fetchone()[0]
+    def update_user_interval(self, a_user_id, a_interval):
+        stmt = update(Users).where(Users.id == a_user_id).values(inverval=a_interval)
+        self.session.execute(stmt)
 
-    @staticmethod
-    def get_user_current_page(a_id, a_topic):
-        stmt = (
-            select(UserTopics.page).
-            where(UserTopics.user_id == a_id).
-            where(UserTopics.chosen_topic == a_topic)
-        )
-        cursor = engine.execute(stmt)
-        return cursor.fetchone()[0]
+    def update_user_state(self, a_user_id, a_state):
+        stmt = update(Users).where(Users.id == a_user_id).values(state=a_state)
+        self.session.execute(stmt)
 
-    @staticmethod
-    def get_user_shown_pages(a_id, a_topic):
-        stmt = (
-            select(UserShownNews.news_id).
-            where(UserShownNews.user_id == a_id).
-            where(UserShownNews.topic == a_topic)
-        )
-        cursor = engine.execute(stmt)
-        return [d[0] for d in cursor.fetchall()]
+    def get_users_topics(self, a_user_id):
+        topic_ids = self.session.query(UserTopics.topic).filter_by(user_id=a_user_id).all()
+        return [topic.topic_name for topic in topic_ids]
 
-    @staticmethod
-    def get_user_state(a_id):
-        stmt = (
-            select(Users.current_state).
-            where(Users.user_id == a_id)
-        )
-        cursor = engine.execute(stmt)
-        return cursor.fetchone()[0]
+    def get_user_shown_posts(self, a_user_id, a_topic_name):
+        topic_id = self.get_topic(a_topic_name).id
+        posts_id = self.session.query(UserShownPosts.post_id).filter_by(user_id=a_user_id, topic_id=topic_id).all()
+        return posts_id
 
-    @staticmethod
-    def remove_topic_of_user(a_id, a_topic):
-        stmt = (
-            delete(UserTopics).
-            where(UserTopics.user_id == a_id).
-            where(UserTopics.chosen_topic == a_topic)
-        )
-        engine.execute(stmt)
-
-        stmt = (
-            delete(UserTopics).
-            where(UserTopics.user_id == a_id).
-            where(UserTopics.chosen_topic == a_topic)
-        )
-        engine.execute(stmt)
-
+    def delete_topic_of_user(self, a_user_id, a_topic_name):
+        topic_id = self.get_topic(a_topic_name).id
+        self.session.query(UserTopics).filter_by(UserTopics.user_id == a_user_id, UserTopics.topic_id == topic_id).\
+            delete()
+        self.session.commit()
